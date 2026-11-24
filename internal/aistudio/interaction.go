@@ -523,8 +523,11 @@ func decodeInteractionEvent(method string, raw json.RawMessage, emit func(Event)
 	if err != nil {
 		return false, withMethod(err, method)
 	}
+	finishReason := "stop"
 	switch status {
 	case 3:
+	case 6:
+		finishReason = "length"
 	case 4:
 		return false, &RPCError{Method: method, StatusCode: http.StatusBadGateway, Message: "interaction failed"}
 	case 5:
@@ -547,7 +550,7 @@ func decodeInteractionEvent(method string, raw json.RawMessage, emit func(Event)
 			return false, withMethod(err, method)
 		}
 	}
-	return true, emit(Event{Kind: EventFinish, FinishReason: "stop", EnvironmentID: environmentID})
+	return true, emit(Event{Kind: EventFinish, FinishReason: finishReason, EnvironmentID: environmentID})
 }
 
 // decodeInteractionDelta 解码 content delta：field 1 文本、field 2 图片、field 3 音频、field 4 文档、field 5 视频、field 6 思考摘要、field 7 思考签名、field 10 引用
