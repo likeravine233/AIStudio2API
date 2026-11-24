@@ -5,16 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 )
 
 // modelStages 是 ListModels field 23 的模型阶段码对应的 Gemini API ModelStage 枚举名
 var modelStages = []string{"", "UNSTABLE_EXPERIMENTAL", "EXPERIMENTAL", "PREVIEW", "STABLE", "LEGACY", "DEPRECATED", "RETIRED"}
-
-// disableInteractionModels 为实验开关：AIS_DISABLE_INTERACTION_MODELS 置位时 kind=2 模型不标记 interaction 能力，改走与未标记账号相同的 GenerateContent 路径
-var disableInteractionModels = os.Getenv("AIS_DISABLE_INTERACTION_MODELS") != ""
 
 // modelStageName 返回模型阶段码的枚举名，0 为未设置，未知码保留数值
 func modelStageName(code int64) string {
@@ -281,22 +277,21 @@ func decodeModelRow(raw json.RawMessage, rowIndex int) (modelEntry, error) {
 		if err != nil {
 			return modelEntry{}, withMethod(err, "ListModels")
 		}
-		kind, err := optionalIntField(interaction, 3, path+"[78]", raw)
-		if err != nil {
-			return modelEntry{}, withMethod(err, "ListModels")
-		}
-		skipInteractions := disableInteractionModels && kind == 2
 		if value := rawAt(interaction, 2); !isJSONNull(value) {
 			background, err := rawBool(value, path+"[78][2]", raw)
 			if err != nil {
 				return modelEntry{}, withMethod(err, "ListModels")
 			}
-			model.Capabilities["interaction_task"] = background && !skipInteractions
+			model.Capabilities["interaction_task"] = background
+		}
+		kind, err := optionalIntField(interaction, 3, path+"[78]", raw)
+		if err != nil {
+			return modelEntry{}, withMethod(err, "ListModels")
 		}
 		// field 4 为 2 且不是后台任务的模型经 CreateInteractionStream 生成，与官网一样以内联数据发送图片
-		model.Capabilities["interaction_stream"] = kind == 2 && !model.Capabilities["interaction_task"] && !skipInteractions
+		model.Capabilities["interaction_stream"] = kind == 2 && !model.Capabilities["interaction_task"]
 		// field 4 为 2 表示 interaction 目标是模型而非 agent，后台任务的 CreateInteraction 在 field 17 携带模型目标
-		model.Capabilities["interaction_model"] = kind == 2 && !skipInteractions
+		model.Capabilities["interaction_model"] = kind == 2
 		if value := rawAt(interaction, 5); !isJSONNull(value) {
 			agentModel, err := rawString(value, path+"[78][5]", raw)
 			if err != nil {
@@ -565,9 +560,8 @@ func decodeGenerationDefaults(row []json.RawMessage, path string, evidence json.
 				return GenerationDefaults{}, withMethod(err, "ListModels")
 			}
 		}
-		skipInteractions := disableInteractionModels && kind == 2
-		defaults.InteractionStream = kind == 2 && !background && !skipInteractions
-		defaults.InteractionTask = background && !skipInteractions
+		defaults.InteractionStream = kind == 2 && !background
+		defaults.InteractionTask = background
 	}
 	if video := rawAt(row, 70); !isJSONNull(video) {
 		items, err := rawArray(video, path+"[70]", evidence)
