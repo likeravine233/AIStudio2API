@@ -105,7 +105,7 @@ func EncodeCreateInteractionStreamRequest(request GenerateRequest, defaults Gene
 	// field 54 输出格式：视频格式 field 4 宽高比、field 5 时长、field 6 分辨率，编辑任务不带输出格式
 	if task == interactionVideoTasks["edit"] {
 		interaction = interaction[:27]
-	} else {
+	} else if defaults.VideoResolution != "" {
 		interaction[53] = []any{[]any{[]any{nil, nil, nil, video}}}
 	}
 	body, proofAt, _ := marshalWAAArray([]any{int64(1), int64(1), nil, interaction, nil, int64(1)}, 5)
