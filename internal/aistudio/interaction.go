@@ -807,8 +807,12 @@ func trimWireNil(values []any) []any {
 	return values
 }
 
-// EncodeCreateInteractionRequest 编码官网后台 agent 的 CreateInteraction 请求并返回参与 WAA 绑定的文本内容
-func EncodeCreateInteractionRequest(request GenerateRequest, model Model) ([]byte, int, []Content, error) {
+// EncodeCreateInteractionRequest 编码官网后台 interaction 的 CreateInteraction 请求并返回参与 WAA 绑定的文本内容；目标是 agent 或 kind=2 模型
+func EncodeCreateInteractionRequest(request GenerateRequest, model Model, defaults GenerationDefaults) ([]byte, int, []Content, error) {
+	// field 79 kind=2 的模型不是 agent：field 18 携带模型目标与 generation config，与官网一致
+	if model.Capabilities["interaction_model"] {
+		return encodeModelInteractionTarget(request, defaults)
+	}
 	agent := strings.TrimPrefix(strings.TrimSpace(request.Model), "models/")
 	// kind 是该 agent 的 agent_config 类型：带默认模型的 agent 为 antigravity，其余为 deep-research
 	kind := "deep-research"
@@ -865,6 +869,47 @@ func EncodeCreateInteractionRequest(request GenerateRequest, model Model) ([]byt
 	return body, proofAt, binding, nil
 }
 
+// encodeModelInteractionTarget 编码 kind=2 模型的 CreateInteraction 请求：field 18 为模型目标与 generation config，generation config 与 CreateInteractionStream 同构
+func encodeModelInteractionTarget(request GenerateRequest, defaults GenerationDefaults) ([]byte, int, []Content, error) {
+	steps, binding, _, err := encodeInteractionSteps(request.Contents)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	level, err := interactionThinkingLevel(request.Config, defaults)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	maxOutput := defaults.MaxOutputTokens
+	if request.Config.MaxOutputTokens != nil {
+		maxOutput = *request.Config.MaxOutputTokens
+	}
+	if maxOutput > defaults.MaxOutputTokens {
+		maxOutput = defaults.MaxOutputTokens
+	}
+	if maxOutput <= 0 {
+		return nil, 0, nil, fmt.Errorf("max output tokens %d 超出模型范围 1-%d", maxOutput, defaults.MaxOutputTokens)
+	}
+	config := make([]any, 8)
+	if level != 0 {
+		config[5] = level
+	}
+	config[6] = int64(1)
+	config[7] = maxOutput
+	interaction := make([]any, 27)
+	if system := strings.TrimSpace(SystemText(request.System)); system != "" {
+		interaction[6] = system
+	}
+	// field 17 为续接的上一轮 interaction ID
+	if request.PreviousInteractionID != "" {
+		interaction[16] = request.PreviousInteractionID
+	}
+	// field 18 为模型目标：field 1 为模型名、field 2 为 generation config
+	interaction[17] = []any{wireModelName(request.Model), config}
+	interaction[26] = []any{steps}
+	body, proofAt, _ := marshalWAAArray([]any{nil, int64(1), int64(1), interaction, nil, int64(1)}, 5)
+	return body, proofAt, binding, nil
+}
+
 // EncodeGetInteractionStreamRequest 编码按 interaction ID 读取后台任务增量与终态的请求
 func EncodeGetInteractionStreamRequest(id string, model string) ([]byte, int, error) {
 	return marshalWAAArray([]any{id, int64(1), nil, nil, nil, int64(1), wireModelName(model)}, 5)
@@ -890,7 +935,7 @@ func (c *Client) generateInteractionTask(ctx context.Context, request GenerateRe
 		reason = "该模型使用 CreateInteraction 后台任务，收集完成后返回"
 	}
 	reportUpstreamMode(ctx, "GetInteractionStream", "stream", 0, reason)
-	body, proofAt, binding, err := EncodeCreateInteractionRequest(request, entry.model)
+	body, proofAt, binding, err := EncodeCreateInteractionRequest(request, entry.model, entry.defaults)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
