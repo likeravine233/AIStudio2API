@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -157,8 +158,16 @@ func interactionRouting(model Model, defaults GenerationDefaults, channel Channe
 		kind = 1
 	}
 	background := model.Capabilities["interaction_task"] || defaults.InteractionTask
-	return ResolveInteractionRouting(kind, background)
+	routing := ResolveInteractionRouting(kind, background)
+	// patch: DISABLE_INTERACTION_MODELS 置位时 kind=2 模型目标改走 GenerateContent；目录 flag 是前端引导且 flagged 账户实测 GenerateContent 仍被接受，任务路径配额池更小。kind=1 agent 任务在 GenerateContent 上无法表达，不受影响
+	if disableInteractionModelsEnv && routing.IsModel() {
+		return ResolveInteractionRouting(0, false)
+	}
+	return routing
 }
+
+// disableInteractionModelsEnv 读取 DISABLE_INTERACTION_MODELS 环境变量，仅补丁构建使用，不进上游配置管道
+var disableInteractionModelsEnv = os.Getenv("DISABLE_INTERACTION_MODELS") != ""
 
 // decodeInteractionField79 解析 ListModels field 79 InteractionConfig 并经 ResolveInteractionRouting 换算接口与目标位置
 func decodeInteractionField79(config json.RawMessage, path string, evidence json.RawMessage) (InteractionRouting, string, error) {
